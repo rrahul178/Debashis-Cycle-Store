@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="bn">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>দোকান ম্যানেজার</title>
+<style>
+:root{--p:#0f766e;--bg:#f1f5f9;--c:#fff;--t:#0f172a;--m:#64748b;--r:#dc2626;--g:#16a34a;--b:#e2e8f0}
+*{box-sizing:border-box}
+body{margin:0;font-family:"Noto Sans Bengali","Segoe UI",Arial,sans-serif;background:var(--bg);color:var(--t);font-size:15px}
+header{background:var(--p);color:#fff;padding:10px 14px}
+header h1{margin:0 0 8px;font-size:18px}
+nav{display:flex;gap:6px;flex-wrap:wrap}
+nav button{background:rgba(255,255,255,.15);color:#fff;border:0;padding:7px 11px;border-radius:6px;cursor:pointer;font-size:14px}
+nav button.on{background:#fff;color:var(--p);font-weight:700}
+main{padding:14px;max-width:1100px;margin:auto}
+.card{background:var(--c);border:1px solid var(--b);border-radius:10px;padding:14px;margin-bottom:14px}
+.card h2{margin:0 0 10px;font-size:16px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
+.stat{background:var(--c);border:1px solid var(--b);border-radius:10px;padding:12px}
+.stat small{color:var(--m);display:block}
+.stat b{font-size:20px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin-bottom:8px}
+label{display:flex;flex-direction:column;font-size:12px;color:var(--m);gap:3px}
+input,select,textarea{padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;font-family:inherit;min-width:110px}
+button.b{background:var(--p);color:#fff;border:0;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:14px}
+button.s{background:#e2e8f0;color:var(--t);border:0;padding:5px 9px;border-radius:5px;cursor:pointer;font-size:13px}
+button.d{background:#fee2e2;color:var(--r);border:0;padding:5px 9px;border-radius:5px;cursor:pointer;font-size:13px}
+.w{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{padding:7px 8px;border-bottom:1px solid var(--b);text-align:left;white-space:nowrap}
+th{background:#f8fafc;font-size:12px;color:var(--m)}
+.r{text-align:right}.red{color:var(--r)}.grn{color:var(--g)}
+.tot{display:flex;justify-content:flex-end;gap:18px;flex-wrap:wrap;font-size:15px;margin-top:8px}
+#invoice{background:#fff;padding:18px;border:1px solid var(--b);max-width:720px;margin:auto}
+#invoice h2{text-align:center;margin:0}
+.ctr{text-align:center;color:var(--m);margin:2px 0}
+@media print{header,.noprint{display:none!important}body{background:#fff}main{padding:0}#invoice{border:0}}
+</style>
+</head>
+<body>
+<header><h1 id="shop"></h1><nav id="nav"></nav></header>
+<main id="app"></main>
+<script>
+const KEY='shopdb_v1';
+function load(){try{const d=JSON.parse(localStorage.getItem(KEY));if(d)return d}catch(e){}
+return{products:[],customers:[],suppliers:[],sales:[],purchases:[],payments:[],expenses:[],settings:{shop:'দেবাশীষ সাইকেল স্টোর',phone:'',address:'',nextInv:1}}}
+let DB=load();
+const save=()=>localStorage.setItem(KEY,JSON.stringify(DB));
+const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+const pad=n=>String(n).padStart(2,'0');
+const today=()=>{const d=new Date();return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())};
+const money=n=>'৳'+(Math.round((n||0)*100)/100).toLocaleString('en-IN');
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const $=id=>document.getElementById(id);
+const sum=(a,f)=>a.reduce((x,y)=>x+f(y),0);
+const CATS=['ব্যাটারি','রিকশার পার্টস','রিকশা','অন্যান্য'];
+const NAV=[['dash','ড্যাশবোর্ড'],['sell','নতুন বিক্রি'],['sales','বিক্রির তালিকা'],['buy','নতুন ক্রয়'],['purch','ক্রয়ের তালিকা'],['prod','পণ্য/স্টক'],['cust','কাস্টমার'],['supp','সাপ্লায়ার'],['exp','খরচ'],['rep','রিপোর্ট'],['set','সেটিংস']];
+let view='dash',arg=null;
+function go(v,a){view=v;arg=a||null;render()}
+function render(){
+ $('shop').textContent=DB.settings.shop;
+ $('nav').innerHTML=NAV.map(([k,n])=>`<button class="${k===view?'on':''}" onclick="go('${k}')">${n}</button>`).join('');
+ const f={dash,sell:()=>docForm('s'),buy:()=>docForm('p'),sales:()=>list('s'),purch:()=>list('p'),prod,cust:()=>parties('c'),supp:()=>parties('s'),exp,rep,set,inv}[view];
+ $('app').innerHTML=f();
+ window.scrollTo(0,0);
+}
+/* ---------- due helpers ---------- */
+const custDue=id=>sum(DB.sales.filter(s=>s.customerId===id),s=>s.due)-sum(DB.payments.filter(p=>p.type==='c'&&p.partyId===id),p=>p.amount);
+const suppDue=id=>sum(DB.purchases.filter(s=>s.supplierId===id),s=>s.due)-sum(DB.payments.filter(p=>p.type==='s'&&p.partyId===id),p=>p.amount);
+/* ---------- report calc ---------- */
+function calc(pre){
+ const S=DB.sales.filter(x=>x.date.startsWith(pre)),P=DB.purchases.filter(x=>x.date.startsWith(pre)),E=DB.expenses.filter(x=>x.date.startsWith(pre)),Y=DB.payments.filter(x=>x.date.startsWith(pre));
+ const sales=sum(S,s=>s.total),cogs=sum(S,s=>sum(s.items,i=>i.qty*i.cost)),profit=sales-cogs,exp=sum(E,e=>e.amount);
+ const cin=sum(S,s=>s.paid)+sum(Y.filter(p=>p.type==='c'),p=>p.amount);
+ const cout=sum(P,s=>s.paid)+sum(Y.filter(p=>p.type==='s'),p=>p.amount)+exp;
+ return{S,P,E,sales,cogs,profit,exp,net:profit-exp,purch:sum(P,s=>s.total),dueGiven:sum(S,s=>s.due),cin,cout,cash:cin-cout}
+}
+/* ---------- dashboard ---------- */
+function dash(){
+ const t=calc(today()),m=calc(today().slice(0,7));
+ const stockVal=sum(DB.products,p=>p.stock*p.cost);
+ const cd=sum(DB.customers,c=>custDue(c.id)),sd=sum(DB.suppliers,s=>suppDue(s.id));
+ const low=DB.products.filter(p=>p.stock<=(p.min||0));
+ return`<div class="grid">
+ <div class="stat"><small>আজকের বিক্রি</small><b>${money(t.sales)}</b></div>
+ <div class="stat"><small>আজকের লাভ</small><b class="grn">${money(t.profit)}</b></div>
+ <div class="stat"><small>এই মাসের বিক্রি</small><b>${money(m.sales)}</b></div>
+ <div class="stat"><small>এই মাসের নিট লাভ</small><b class="grn">${money(m.net)}</b></div>
+ <div class="stat"><small>কাস্টমারের কাছে পাওনা</small><b class="red">${money(cd)}</b></div>
+ <div class="stat"><small>সাপ্লায়ারকে দেনা</small><b class="red">${money(sd)}</b></div>
+ <div class="stat"><small>স্টকের মূল্য (ক্রয়মূল্যে)</small><b>${money(stockVal)}</b></div>
+ <div class="stat"><small>আজকের ক্যাশ (আয়-ব্যয়)</small><b>${money(t.cash)}</b></div></div>
+ <div class="card" style="margin-top:14px"><h2>স্টক কম / শেষ</h2>${low.length?`<div class="w"><table><tr><th>পণ্য</th><th>স্টক</th><th>সর্বনিম্ন</th></tr>${low.map(p=>`<tr><td>${esc(p.name)}</td><td class="red">${p.stock}</td><td>${p.min||0}</td></tr>`).join('')}</table></div>`:'<p>সব পণ্যের স্টক ঠিক আছে।</p>'}</div>
+ ${DB.products.length?'':'<div class="card">শুরুতে <b>পণ্য/স্টক</b> মেনু থেকে পণ্য যোগ করুন।</div>'}`;
+}
+/* ---------- products ---------- */
+let pq='',pedit=null;
+function prod(){
+ const e=DB.products.find(p=>p.id===pedit)||{};
+ const L=DB.products.filter(p=>(p.name+p.cat).toLowerCase().includes(pq.toLowerCase()));
+ return`<div class="card"><h2>${pedit?'পণ্য এডিট':'নতুন পণ্য'}</h2><div class="row">
+ <label>নাম<input id="pn" value="${esc(e.name)}"></label>
+ <label>ক্যাটাগরি<select id="pc">${CATS.map(c=>`<option ${e.cat===c?'selected':''}>${c}</option>`).join('')}</select></label>
+ <label>একক<input id="pu" value="${esc(e.unit||'পিস')}" style="min-width:70px;width:80px"></label>
+ <label>ক্রয়মূল্য<input id="pcost" type="number" value="${e.cost??''}"></label>
+ <label>বিক্রয়মূল্য<input id="psell" type="number" value="${e.sell??''}"></label>
+ <label>স্টক<input id="pst" type="number" value="${e.stock??0}"></label>
+ <label>সর্বনিম্ন স্টক<input id="pmin" type="number" value="${e.min??2}"></label>
+ <button class="b" onclick="saveProd()">সেভ</button>${pedit?'<button class="s" onclick="pedit=null;render()">বাতিল</button>':''}</div></div>
+ <div class="card"><div class="row"><label>খুঁজুন<input value="${esc(pq)}" oninput="pq=this.value;$('plist').innerHTML=plist()"></label></div><div class="w" id="plist">${plist()}</div></div>`;
+}
+function plist(){
+ const L=DB.products.filter(p=>(p.name+p.cat).toLowerCase().includes(pq.toLowerCase()));
+ return`<table><tr><th>নাম</th><th>ক্যাটাগরি</th><th class="r">ক্রয়</th><th class="r">বিক্রয়</th><th class="r">স্টক</th><th></th></tr>${L.map(p=>`<tr><td>${esc(p.name)}</td><td>${esc(p.cat)}</td><td class="r">${money(p.cost)}</td><td class="r">${money(p.sell)}</td><td class="r ${p.stock<=(p.min||0)?'red':''}">${p.stock} ${esc(p.unit)}</td><td><button class="s" onclick="pedit='${p.id}';render()">এডিট</button> <button class="d" onclick="delProd('${p.id}')">মুছুন</button></td></tr>`).join('')||'<tr><td colspan="6">কোনো পণ্য নেই</td></tr>'}</table>`;
+}
+function saveProd(){
+ const name=$('pn').value.trim();if(!name)return alert('নাম দিন');
+ const o={name,cat:$('pc').value,unit:$('pu').value||'পিস',cost:+$('pcost').value||0,sell:+$('psell').value||0,stock:+$('pst').value||0,min:+$('pmin').value||0};
+ if(pedit)Object.assign(DB.products.find(p=>p.id===pedit),o);else DB.products.push({id:uid(),...o});
+ pedit=null;save();render();
+}
+function delProd(id){if(confirm('পণ্যটি মুছবেন? (আগের ইনভয়েস অক্ষত থাকবে)')){DB.products=DB.products.filter(p=>p.id!==id);save();render()}}
+/* ---------- sale / purchase form ---------- */
+const CF={s:{title:'নতুন বিক্রি',party:'customers',pk:'customerId',pn:'customerName',list:'sales',pf:'sell',pl:'কাস্টমার',walk:'নগদ কাস্টমার',pr:'বিক্রয়মূল্য'},
+p:{title:'নতুন ক্রয়',party:'suppliers',pk:'supplierId',pn:'supplierName',list:'purchases',pf:'cost',pl:'সাপ্লায়ার',walk:'নগদ ক্রয়',pr:'ক্রয়মূল্য'}};
+const cart={s:[],p:[]},fs={s:{party:'',disc:0,paid:'',date:today(),np:'',sel:''},p:{party:'',disc:0,paid:'',date:today(),np:'',sel:''}};
+function docForm(k){
+ const c=CF[k],f=fs[k],items=cart[k];
+ return`<div class="card"><h2>${c.title}</h2><div class="row">
+ <label>তারিখ<input type="date" value="${f.date}" onchange="fs.${k}.date=this.value"></label>
+ <label>${c.pl}<select onchange="fs.${k}.party=this.value"><option value="">${c.walk}</option>${DB[c.party].map(x=>`<option value="${x.id}" ${f.party===x.id?'selected':''}>${esc(x.name)} ${x.phone?'('+esc(x.phone)+')':''}</option>`).join('')}</select></label>
+ <button class="s" onclick="quickParty('${k}')">+ নতুন ${c.pl}</button></div>
+ <div class="row">
+ <label>পণ্য<select id="it${k}" onchange="pickItem('${k}')"><option value="">-- বেছে নিন --</option>${DB.products.map(p=>`<option value="${p.id}" ${f.sel===p.id?'selected':''}>${esc(p.name)} (স্টক ${p.stock})</option>`).join('')}</select></label>
+ <label>পরিমাণ<input id="q${k}" type="number" value="1" min="1" style="width:90px"></label>
+ <label>${c.pr}<input id="pr${k}" type="number" style="width:120px" value="${f.sel?(DB.products.find(p=>p.id===f.sel)||{})[c.pf]:''}"></label>
+ <button class="b" onclick="addItem('${k}')">যোগ করুন</button></div>
+ <div class="w"><table><tr><th>পণ্য</th><th class="r">পরিমাণ</th><th class="r">দর</th><th class="r">মোট</th><th></th></tr>
+ ${items.map((i,n)=>`<tr><td>${esc(i.name)}</td><td class="r">${i.qty}</td><td class="r">${money(i.price)}</td><td class="r">${money(i.qty*i.price)}</td><td><button class="d" onclick="cart.${k}.splice(${n},1);render()">✕</button></td></tr>`).join('')||'<tr><td colspan="5">কোনো আইটেম নেই</td></tr>'}</table></div>
+ <div class="row" style="margin-top:10px">
+ <label>ছাড় (৳)<input type="number" value="${f.disc||''}" oninput="fs.${k}.disc=+this.value||0;updTot('${k}')"></label>
+ <label>পরিশোধ (৳) — ফাঁকা = পুরো টাকা<input type="number" value="${f.paid}" oninput="fs.${k}.paid=this.value;updTot('${k}')"></label></div>
+ <div class="tot"><span>সাবটোটাল: <b id="st${k}"></b></span><span>মোট: <b id="tt${k}"></b></span><span>জমা: <b id="pd${k}" class="grn"></b></span><span>বাকি: <b id="du${k}" class="red"></b></span></div>
+ <div style="text-align:right;margin-top:10px"><button class="b" onclick="saveDoc('${k}')">সেভ করুন${k==='s'?' ও ইনভয়েস দেখুন':''}</button></div></div>`
+ +(setTimeout(()=>updTot(k)),'');
+}
+function tots(k){const f=fs[k],st=sum(cart[k],i=>i.qty*i.price),t=Math.max(0,st-(f.disc||0)),p=f.paid===''?t:(+f.paid||0);return{st,t,p,d:t-p}}
+function updTot(k){const x=tots(k);$('st'+k).textContent=money(x.st);$('tt'+k).textContent=money(x.t);$('pd'+k).textContent=money(x.p);$('du'+k).textContent=money(Math.max(0,x.d))}
+function pickItem(k){fs[k].sel=$('it'+k).value;const p=DB.products.find(p=>p.id===fs[k].sel);$('pr'+k).value=p?p[CF[k].pf]:''}
+function addItem(k){
+ const pid=$('it'+k).value;if(!pid)return alert('পণ্য বেছে নিন');
+ const p=DB.products.find(x=>x.id===pid),qty=+$('q'+k).value,price=+$('pr'+k).value;
+ if(!(qty>0)||!(price>=0))return alert('পরিমাণ ও দাম ঠিক করুন');
+ if(k==='s'&&qty>p.stock&&!confirm(`স্টকে আছে ${p.stock}, আপনি ${qty} বিক্রি করছেন। চালিয়ে যাবেন?`))return;
+ cart[k].push({pid,name:p.name,qty,price,cost:p.cost});fs[k].sel='';render();
+}
+function quickParty(k){
+ const name=prompt('নাম:');if(!name)return;const phone=prompt('ফোন (ঐচ্ছিক):')||'';
+ const o={id:uid(),name,phone,address:''};DB[CF[k].party].push(o);fs[k].party=o.id;save();render();
+}
+function saveDoc(k){
+ const c=CF[k],f=fs[k],items=cart[k];if(!items.length)return alert('আইটেম যোগ করুন');
+ const x=tots(k);if(x.d<0)return alert('পরিশোধ মোটের চেয়ে বেশি হতে পারে না');
+ if(x.d>0&&!f.party)return alert('বাকি রাখতে হলে '+c.pl+' বেছে নিন');
+ const party=DB[c.party].find(p=>p.id===f.party);
+ const rec={id:uid(),date:f.date,[c.pk]:f.party||null,[c.pn]:party?party.name:c.walk,items:items.map(i=>({...i})),subtotal:x.st,discount:f.disc||0,total:x.t,paid:x.p,due:x.d};
+ if(k==='s'){rec.inv='INV-'+String(DB.settings.nextInv++).padStart(4,'0');items.forEach(i=>{const p=DB.products.find(p=>p.id===i.pid);if(p)p.stock-=i.qty})}
+ else items.forEach(i=>{const p=DB.products.find(p=>p.id===i.pid);if(p){p.stock+=i.qty;p.cost=i.price}});
+ DB[c.list].push(rec);save();cart[k]=[];fs[k]={party:'',disc:0,paid:'',date:today(),np:'',sel:''};
+ if(k==='s')go('inv',rec.id);else go('purch');
+}
+/* ---------- lists ---------- */
+function list(k){
+ const c=CF[k],L=[...DB[c.list]].sort((a,b)=>b.date.localeCompare(a.date)||0).reverse().reverse();
+ return`<div class="card"><h2>${k==='s'?'বিক্রির তালিকা':'ক্রয়ের তালিকা'}</h2><div class="w"><table><tr><th>তারিখ</th>${k==='s'?'<th>ইনভয়েস</th>':''}<th>${c.pl}</th><th class="r">মোট</th><th class="r">জমা</th><th class="r">বাকি</th><th></th></tr>
+ ${L.map(s=>`<tr><td>${s.date}</td>${k==='s'?`<td>${s.inv}</td>`:''}<td>${esc(s[c.pn])}</td><td class="r">${money(s.total)}</td><td class="r">${money(s.paid)}</td><td class="r ${s.due>0?'red':''}">${money(s.due)}</td><td>${k==='s'?`<button class="s" onclick="go('inv','${s.id}')">ইনভয়েস</button> `:''}<button class="d" onclick="cancelDoc('${k}','${s.id}')">বাতিল</button></td></tr>`).join('')||'<tr><td colspan="7">কিছু নেই</td></tr>'}</table></div></div>`;
+}
+function cancelDoc(k,id){
+ if(!confirm('বাতিল করলে স্টক আগের অবস্থায় ফিরবে। নিশ্চিত?'))return;
+ const c=CF[k],r=DB[c.list].find(x=>x.id===id);
+ r.items.forEach(i=>{const p=DB.products.find(p=>p.id===i.pid);if(p)p.stock+=(k==='s'?i.qty:-i.qty)});
+ DB[c.list]=DB[c.list].filter(x=>x.id!==id);save();render();
+}
+/* ---------- invoice ---------- */
+function inv(){
+ const s=DB.sales.find(x=>x.id===arg);if(!s)return'<div class="card">ইনভয়েস পাওয়া যায়নি</div>';
+ const st=DB.settings,cu=DB.customers.find(c=>c.id===s.customerId);
+ return`<div class="noprint" style="text-align:center;margin-bottom:10px"><button class="b" onclick="window.print()">প্রিন্ট</button> <button class="s" onclick="go('sell')">নতুন বিক্রি</button></div>
+ <div id="invoice"><h2>${esc(st.shop)}</h2><p class="ctr">${esc(st.address)} ${st.phone?'| মোবাইল: '+esc(st.phone):''}</p><hr>
+ <p><b>ইনভয়েস:</b> ${s.inv} &nbsp; <b>তারিখ:</b> ${s.date}<br><b>কাস্টমার:</b> ${esc(s.customerName)} ${cu&&cu.phone?'('+esc(cu.phone)+')':''}</p>
+ <table><tr><th>#</th><th>বিবরণ</th><th class="r">পরিমাণ</th><th class="r">দর</th><th class="r">মোট</th></tr>${s.items.map((i,n)=>`<tr><td>${n+1}</td><td>${esc(i.name)}</td><td class="r">${i.qty}</td><td class="r">${money(i.price)}</td><td class="r">${money(i.qty*i.price)}</td></tr>`).join('')}</table>
+ <div class="tot" style="flex-direction:column;align-items:flex-end;gap:3px"><span>সাবটোটাল: ${money(s.subtotal)}</span><span>ছাড়: ${money(s.discount)}</span><span><b>সর্বমোট: ${money(s.total)}</b></span><span>জমা: ${money(s.paid)}</span><span class="red"><b>বাকি: ${money(s.due)}</b></span>${cu?`<span>মোট পুরনো বাকি: ${money(custDue(cu.id))}</span>`:''}</div>
+ <p class="ctr" style="margin-top:20px">ধন্যবাদ! আবার আসবেন।</p></div>`;
+}
+/* ---------- parties ---------- */
+function parties(t){
+ const k=t==='c'?'customers':'suppliers',dueF=t==='c'?custDue:suppDue,lab=t==='c'?'কাস্টমার':'সাপ্লায়ার';
+ return`<div class="card"><h2>নতুন ${lab}</h2><div class="row"><label>নাম<input id="xn"></label><label>ফোন<input id="xp"></label><label>ঠিকানা<input id="xa"></label><button class="b" onclick="addParty('${k}')">যোগ করুন</button></div></div>
+ <div class="card"><div class="w"><table><tr><th>নাম</th><th>ফোন</th><th>ঠিকানা</th><th class="r">${t==='c'?'পাওনা':'দেনা'}</th><th></th></tr>
+ ${DB[k].map(x=>{const d=dueF(x.id);return`<tr><td>${esc(x.name)}</td><td>${esc(x.phone)}</td><td>${esc(x.address)}</td><td class="r ${d>0?'red':''}">${money(d)}</td><td><button class="b" onclick="pay('${t}','${x.id}')">${t==='c'?'টাকা জমা নিন':'টাকা পরিশোধ'}</button> <button class="s" onclick="ledger('${t}','${x.id}')">হিসাব</button> <button class="d" onclick="delParty('${k}','${x.id}')">মুছুন</button></td></tr>`}).join('')||'<tr><td colspan="5">কেউ নেই</td></tr>'}</table></div></div>`;
+}
+function addParty(k){const n=$('xn').value.trim();if(!n)return alert('নাম দিন');DB[k].push({id:uid(),name:n,phone:$('xp').value,address:$('xa').value});save();render()}
+function delParty(k,id){if(confirm('মুছবেন? (আগের লেনদেন থাকবে)')){DB[k]=DB[k].filter(x=>x.id!==id);save();render()}}
+function pay(t,id){
+ const a=+prompt(t==='c'?'কত টাকা জমা নিলেন?':'কত টাকা পরিশোধ করলেন?');if(!(a>0))return;
+ DB.payments.push({id:uid(),date:today(),type:t,partyId:id,amount:a});save();render();
+}
+function ledger(t,id){
+ const isC=t==='c',L=isC?DB.sales.filter(s=>s.customerId===id):DB.purchases.filter(s=>s.supplierId===id);
+ const P=DB.payments.filter(p=>p.type===t&&p.partyId===id);
+ const rows=[...L.map(s=>({d:s.date,t:(isC?s.inv:'ক্রয়')+' — মোট '+money(s.total)+', জমা '+money(s.paid),dr:s.due,cr:0})),...P.map(p=>({d:p.date,t:'টাকা '+(isC?'জমা':'পরিশোধ'),dr:0,cr:p.amount}))].sort((a,b)=>a.d.localeCompare(b.d));
+ let bal=0;$('app').innerHTML=`<div class="card"><button class="s" onclick="go('${isC?'cust':'supp'}')">← ফিরে যান</button><h2 style="margin-top:10px">হিসাব খাতা</h2><div class="w"><table><tr><th>তারিখ</th><th>বিবরণ</th><th class="r">বাকি হলো</th><th class="r">পরিশোধ</th><th class="r">ব্যালেন্স</th></tr>${rows.map(r=>{bal+=r.dr-r.cr;return`<tr><td>${r.d}</td><td>${esc(r.t)}</td><td class="r">${r.dr?money(r.dr):''}</td><td class="r">${r.cr?money(r.cr):''}</td><td class="r">${money(bal)}</td></tr>`}).join('')||'<tr><td colspan="5">লেনদেন নেই</td></tr>'}</table></div></div>`;
+}
+/* ---------- expenses ---------- */
+function exp(){
+ const L=[...DB.expenses].sort((a,b)=>b.date.localeCompare(a.date));
+ return`<div class="card"><h2>নতুন খরচ</h2><div class="row"><label>তারিখ<input id="ed" type="date" value="${today()}"></label><label>খাত<select id="ec">${['দোকান ভাড়া','বেতন','বিদ্যুৎ বিল','পরিবহন','চা-নাস্তা','অন্যান্য'].map(c=>`<option>${c}</option>`).join('')}</select></label><label>টাকা<input id="ea" type="number"></label><label>নোট<input id="en"></label><button class="b" onclick="addExp()">যোগ করুন</button></div></div>
+ <div class="card"><div class="w"><table><tr><th>তারিখ</th><th>খাত</th><th>নোট</th><th class="r">টাকা</th><th></th></tr>${L.map(e=>`<tr><td>${e.date}</td><td>${esc(e.cat)}</td><td>${esc(e.note)}</td><td class="r">${money(e.amount)}</td><td><button class="d" onclick="DB.expenses=DB.expenses.filter(x=>x.id!=='${e.id}');save();render()">✕</button></td></tr>`).join('')||'<tr><td colspan="5">কোনো খরচ নেই</td></tr>'}</table></div></div>`;
+}
+function addExp(){const a=+$('ea').value;if(!(a>0))return alert('টাকার পরিমাণ দিন');DB.expenses.push({id:uid(),date:$('ed').value,cat:$('ec').value,amount:a,note:$('en').value});save();render()}
+/* ---------- reports ---------- */
+let rt='d',rv=today();
+function rep(){
+ const pre=rt==='d'?rv.slice(0,10):rt==='m'?rv.slice(0,7):rv.slice(0,4),r=calc(pre);
+ const inp=rt==='d'?`<input type="date" value="${rv}" onchange="rv=this.value;render()">`:rt==='m'?`<input type="month" value="${rv.slice(0,7)}" onchange="rv=this.value+'-01';render()">`:`<input type="number" value="${rv.slice(0,4)}" style="width:100px" onchange="rv=this.value+'-01-01';render()">`;
+ const items={};r.S.forEach(s=>s.items.forEach(i=>{items[i.name]=items[i.name]||{q:0,t:0};items[i.name].q+=i.qty;items[i.name].t+=i.qty*i.price}));
+ let months='';
+ if(rt==='y'){months=`<div class="card"><h2>মাসভিত্তিক সারাংশ</h2><div class="w"><table><tr><th>মাস</th><th class="r">বিক্রি</th><th class="r">ক্রয়</th><th class="r">মোট লাভ</th><th class="r">খরচ</th><th class="r">নিট লাভ</th></tr>${Array.from({length:12},(_,i)=>{const c=calc(pre+'-'+pad(i+1));return`<tr><td>${i+1} মাস</td><td class="r">${money(c.sales)}</td><td class="r">${money(c.purch)}</td><td class="r">${money(c.profit)}</td><td class="r">${money(c.exp)}</td><td class="r">${money(c.net)}</td></tr>`}).join('')}</table></div></div>`}
+ return`<div class="card noprint"><div class="row"><label>রিপোর্টের ধরন<select onchange="rt=this.value;render()"><option value="d" ${rt==='d'?'selected':''}>দৈনিক</option><option value="m" ${rt==='m'?'selected':''}>মাসিক</option><option value="y" ${rt==='y'?'selected':''}>বার্ষিক</option></select></label><label>সময়${inp}</label><button class="b" onclick="window.print()">প্রিন্ট</button></div></div>
+ <div class="grid"><div class="stat"><small>মোট বিক্রি</small><b>${money(r.sales)}</b></div><div class="stat"><small>পণ্যের ক্রয়মূল্য (COGS)</small><b>${money(r.cogs)}</b></div><div class="stat"><small>মোট লাভ</small><b class="grn">${money(r.profit)}</b></div><div class="stat"><small>খরচ</small><b>${money(r.exp)}</b></div><div class="stat"><small>নিট লাভ</small><b class="${r.net>=0?'grn':'red'}">${money(r.net)}</b></div><div class="stat"><small>মোট ক্রয়</small><b>${money(r.purch)}</b></div><div class="stat"><small>এ সময়ে বাকি দেওয়া</small><b class="red">${money(r.dueGiven)}</b></div><div class="stat"><small>ক্যাশ আয় / ব্যয়</small><b>${money(r.cin)} / ${money(r.cout)}</b></div><div class="stat"><small>নিট ক্যাশ</small><b>${money(r.cash)}</b></div></div>
+ ${months}
+ <div class="card" style="margin-top:14px"><h2>পণ্যভিত্তিক বিক্রি</h2><div class="w"><table><tr><th>পণ্য</th><th class="r">পরিমাণ</th><th class="r">টাকা</th></tr>${Object.entries(items).sort((a,b)=>b[1].t-a[1].t).map(([n,v])=>`<tr><td>${esc(n)}</td><td class="r">${v.q}</td><td class="r">${money(v.t)}</td></tr>`).join('')||'<tr><td colspan="3">বিক্রি নেই</td></tr>'}</table></div></div>
+ <div class="card"><h2>বিক্রির বিবরণ</h2><div class="w"><table><tr><th>তারিখ</th><th>ইনভয়েস</th><th>কাস্টমার</th><th class="r">মোট</th><th class="r">বাকি</th></tr>${r.S.map(s=>`<tr><td>${s.date}</td><td>${s.inv}</td><td>${esc(s.customerName)}</td><td class="r">${money(s.total)}</td><td class="r">${money(s.due)}</td></tr>`).join('')||'<tr><td colspan="5">কিছু নেই</td></tr>'}</table></div></div>`;
+}
+/* ---------- settings ---------- */
+function set(){
+ const s=DB.settings;
+ return`<div class="card"><h2>দোকানের তথ্য (ইনভয়েসে দেখাবে)</h2><div class="row"><label>দোকানের নাম<input id="sn" value="${esc(s.shop)}"></label><label>মোবাইল<input id="sp" value="${esc(s.phone)}"></label><label>ঠিকানা<input id="sa" value="${esc(s.address)}"></label><button class="b" onclick="saveSet()">সেভ</button></div></div>
+ <div class="card"><h2>ব্যাকআপ</h2><p>তথ্য এই ব্রাউজারে সেভ থাকে। নিয়মিত (প্রতিদিন/সপ্তাহে) ব্যাকআপ ডাউনলোড করে রাখুন — ফোন/ব্রাউজার বদলালে ব্যাকআপ রিস্টোর করলে সব ফিরে আসবে।</p>
+ <div class="row"><button class="b" onclick="backup()">ব্যাকআপ ডাউনলোড</button><label>রিস্টোর<input type="file" accept=".json" onchange="restore(this)"></label><button class="d" onclick="resetAll()">সব তথ্য মুছুন</button></div></div>`;
+}
+function saveSet(){Object.assign(DB.settings,{shop:$('sn').value,phone:$('sp').value,address:$('sa').value});save();render()}
+function backup(){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(DB)],{type:'application/json'}));a.download='dokan-backup-'+today()+'.json';a.click()}
+function restore(el){const f=el.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{const d=JSON.parse(r.result);if(!d.products||!d.sales)throw 0;if(confirm('বর্তমান সব তথ্য বদলে যাবে। নিশ্চিত?')){DB=d;save();render()}}catch(e){alert('ফাইলটি ঠিক নয়')}};r.readAsText(f)}
+function resetAll(){if(confirm('সব তথ্য মুছে যাবে! নিশ্চিত?')&&confirm('শেষবার জিজ্ঞাসা: সত্যিই মুছবেন?')){localStorage.removeItem(KEY);DB=load();render()}}
+render();
+</script>
+</body>
+</html>
