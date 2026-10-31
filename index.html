@@ -10,6 +10,8 @@
 body{margin:0;font-family:"Noto Sans Bengali","Segoe UI",Arial,sans-serif;background:var(--bg);color:var(--t);font-size:15px}
 header{background:var(--p);color:#fff;padding:10px 14px}
 header h1{margin:0 0 8px;font-size:18px}
+#who{font-size:12px;margin-top:8px;opacity:.9}
+#who button{background:rgba(255,255,255,.2);color:#fff;border:0;border-radius:5px;padding:3px 9px;cursor:pointer;margin-left:6px}
 nav{display:flex;gap:6px;flex-wrap:wrap}
 nav button{background:rgba(255,255,255,.15);color:#fff;border:0;padding:7px 11px;border-radius:6px;cursor:pointer;font-size:14px}
 nav button.on{background:#fff;color:var(--p);font-weight:700}
@@ -24,6 +26,7 @@ main{padding:14px;max-width:1100px;margin:auto}
 label{display:flex;flex-direction:column;font-size:12px;color:var(--m);gap:3px}
 input,select,textarea{padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;font-family:inherit;min-width:110px}
 button.b{background:var(--p);color:#fff;border:0;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:14px}
+button.b:disabled{opacity:.6;cursor:wait}
 button.s{background:#e2e8f0;color:var(--t);border:0;padding:5px 9px;border-radius:5px;cursor:pointer;font-size:13px}
 button.d{background:#fee2e2;color:var(--r);border:0;padding:5px 9px;border-radius:5px;cursor:pointer;font-size:13px}
 .w{overflow-x:auto}
@@ -32,35 +35,73 @@ th,td{padding:7px 8px;border-bottom:1px solid var(--b);text-align:left;white-spa
 th{background:#f8fafc;font-size:12px;color:var(--m)}
 .r{text-align:right}.red{color:var(--r)}.grn{color:var(--g)}
 .tot{display:flex;justify-content:flex-end;gap:18px;flex-wrap:wrap;font-size:15px;margin-top:8px}
+.login{max-width:360px;margin:40px auto}
+.login input{width:100%}
 #invoice{background:#fff;padding:18px;border:1px solid var(--b);max-width:720px;margin:auto}
 #invoice h2{text-align:center;margin:0}
 .ctr{text-align:center;color:var(--m);margin:2px 0}
 @media print{header,.noprint{display:none!important}body{background:#fff}main{padding:0}#invoice{border:0}}
 </style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
 </head>
 <body>
-<header><h1 id="shop"></h1><nav id="nav"></nav></header>
+<header><h1 id="shop">দোকান ম্যানেজার</h1><nav id="nav"></nav><div id="who"></div></header>
 <main id="app"></main>
 <script>
-const KEY='shopdb_v1';
-function load(){try{const d=JSON.parse(localStorage.getItem(KEY));if(d)return d}catch(e){}
-return{products:[],customers:[],suppliers:[],sales:[],purchases:[],payments:[],expenses:[],settings:{shop:'দেবাশীষ সাইকেল স্টোর',phone:'',address:'',nextInv:1}}}
-let DB=load();
-const save=()=>localStorage.setItem(KEY,JSON.stringify(DB));
-const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+/* ---------- Supabase ---------- */
+let sb=null,sess=null;
+let DB={products:[],customers:[],suppliers:[],sales:[],purchases:[],payments:[],expenses:[],settings:{shop:'দোকান ম্যানেজার',phone:'',address:''}};
+const TBL=['products','customers','suppliers','sales','purchases','payments','expenses'];
+const uid=()=>crypto.randomUUID();
 const pad=n=>String(n).padStart(2,'0');
 const today=()=>{const d=new Date();return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())};
 const money=n=>'৳'+(Math.round((n||0)*100)/100).toLocaleString('en-IN');
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const $=id=>document.getElementById(id);
 const sum=(a,f)=>a.reduce((x,y)=>x+f(y),0);
+async function q(p){const r=await p;if(r.error){alert('সমস্যা হয়েছে: '+r.error.message);throw r.error}return r.data}
+async function fetchAll(t){
+ let out=[],from=0;
+ for(;;){const r=await sb.from(t).select('*').order('id').range(from,from+999);if(r.error)throw r.error;out=out.concat(r.data);if(r.data.length<1000)break;from+=1000}
+ return out;
+}
+async function loadTables(ts){
+ try{
+  await Promise.all(ts.map(async t=>{DB[t]=await fetchAll(t)}));
+  if(ts===TBL||ts.includes('settings')){const r=await sb.from('settings').select('*').eq('id',1).maybeSingle();if(r.data)DB.settings=r.data}
+ }catch(e){alert('ডাটা লোড করতে সমস্যা: '+(e.message||e))}
+}
+const loadAll=()=>loadTables([...TBL,'settings']);
+/* ---------- auth ---------- */
+function showLogin(msg){
+ $('nav').innerHTML='';$('who').innerHTML='';
+ $('app').innerHTML=`<div class="card login"><h2>লগইন করুন</h2>
+ <label>ইমেইল<input id="le" type="email" autocomplete="username"></label><br>
+ <label>পাসওয়ার্ড<input id="lp" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()"></label>
+ <p class="red" id="lmsg">${esc(msg||'')}</p>
+ <button class="b" id="lb" onclick="doLogin()">লগইন</button></div>`;
+}
+async function doLogin(){
+ const b=$('lb');b.disabled=true;
+ const r=await sb.auth.signInWithPassword({email:$('le').value.trim(),password:$('lp').value});
+ if(r.error){b.disabled=false;$('lmsg').textContent='ইমেইল বা পাসওয়ার্ড ঠিক নয়';return}
+ sess=r.data.session;$('app').innerHTML='<div class="card">লোড হচ্ছে…</div>';await loadAll();render();
+}
+async function logout(){await sb.auth.signOut();sess=null;DB.products=DB.sales=DB.purchases=DB.payments=DB.expenses=DB.customers=DB.suppliers=[];showLogin()}
+/* ---------- constants ---------- */
 const CATS=['ব্যাটারি','রিকশার পার্টস','রিকশা','অন্যান্য'];
 const NAV=[['dash','ড্যাশবোর্ড'],['sell','নতুন বিক্রি'],['sales','বিক্রির তালিকা'],['buy','নতুন ক্রয়'],['purch','ক্রয়ের তালিকা'],['prod','পণ্য/স্টক'],['cust','কাস্টমার'],['supp','সাপ্লায়ার'],['exp','খরচ'],['rep','রিপোর্ট'],['set','সেটিংস']];
 let view='dash',arg=null;
-function go(v,a){view=v;arg=a||null;render()}
+async function go(v,a,noLoad){
+ view=v;arg=a||null;
+ if(!noLoad){$('app').innerHTML='<div class="card">লোড হচ্ছে…</div>';await loadAll()}
+ render();
+}
 function render(){
- $('shop').textContent=DB.settings.shop;
+ $('shop').textContent=DB.settings.shop||'দোকান ম্যানেজার';
  $('nav').innerHTML=NAV.map(([k,n])=>`<button class="${k===view?'on':''}" onclick="go('${k}')">${n}</button>`).join('');
+ $('who').innerHTML=`${esc(sess?.user?.email||'')} <button onclick="go(view)">রিফ্রেশ</button><button onclick="logout()">লগআউট</button>`;
  const f={dash,sell:()=>docForm('s'),buy:()=>docForm('p'),sales:()=>list('s'),purch:()=>list('p'),prod,cust:()=>parties('c'),supp:()=>parties('s'),exp,rep,set,inv}[view];
  $('app').innerHTML=f();
  window.scrollTo(0,0);
@@ -98,7 +139,6 @@ function dash(){
 let pq='',pedit=null;
 function prod(){
  const e=DB.products.find(p=>p.id===pedit)||{};
- const L=DB.products.filter(p=>(p.name+p.cat).toLowerCase().includes(pq.toLowerCase()));
  return`<div class="card"><h2>${pedit?'পণ্য এডিট':'নতুন পণ্য'}</h2><div class="row">
  <label>নাম<input id="pn" value="${esc(e.name)}"></label>
  <label>ক্যাটাগরি<select id="pc">${CATS.map(c=>`<option ${e.cat===c?'selected':''}>${c}</option>`).join('')}</select></label>
@@ -107,24 +147,27 @@ function prod(){
  <label>বিক্রয়মূল্য<input id="psell" type="number" value="${e.sell??''}"></label>
  <label>স্টক<input id="pst" type="number" value="${e.stock??0}"></label>
  <label>সর্বনিম্ন স্টক<input id="pmin" type="number" value="${e.min??2}"></label>
- <button class="b" onclick="saveProd()">সেভ</button>${pedit?'<button class="s" onclick="pedit=null;render()">বাতিল</button>':''}</div></div>
+ <button class="b" onclick="saveProd(this)">সেভ</button>${pedit?'<button class="s" onclick="pedit=null;render()">বাতিল</button>':''}</div></div>
  <div class="card"><div class="row"><label>খুঁজুন<input value="${esc(pq)}" oninput="pq=this.value;$('plist').innerHTML=plist()"></label></div><div class="w" id="plist">${plist()}</div></div>`;
 }
 function plist(){
- const L=DB.products.filter(p=>(p.name+p.cat).toLowerCase().includes(pq.toLowerCase()));
+ const L=DB.products.filter(p=>((p.name||'')+(p.cat||'')).toLowerCase().includes(pq.toLowerCase()));
  return`<table><tr><th>নাম</th><th>ক্যাটাগরি</th><th class="r">ক্রয়</th><th class="r">বিক্রয়</th><th class="r">স্টক</th><th></th></tr>${L.map(p=>`<tr><td>${esc(p.name)}</td><td>${esc(p.cat)}</td><td class="r">${money(p.cost)}</td><td class="r">${money(p.sell)}</td><td class="r ${p.stock<=(p.min||0)?'red':''}">${p.stock} ${esc(p.unit)}</td><td><button class="s" onclick="pedit='${p.id}';render()">এডিট</button> <button class="d" onclick="delProd('${p.id}')">মুছুন</button></td></tr>`).join('')||'<tr><td colspan="6">কোনো পণ্য নেই</td></tr>'}</table>`;
 }
-function saveProd(){
+async function saveProd(btn){
  const name=$('pn').value.trim();if(!name)return alert('নাম দিন');
- const o={name,cat:$('pc').value,unit:$('pu').value||'পিস',cost:+$('pcost').value||0,sell:+$('psell').value||0,stock:+$('pst').value||0,min:+$('pmin').value||0};
- if(pedit)Object.assign(DB.products.find(p=>p.id===pedit),o);else DB.products.push({id:uid(),...o});
- pedit=null;save();render();
+ const o={id:pedit||uid(),name,cat:$('pc').value,unit:$('pu').value||'পিস',cost:+$('pcost').value||0,sell:+$('psell').value||0,stock:+$('pst').value||0,min:+$('pmin').value||0};
+ btn.disabled=true;
+ try{await q(sb.from('products').upsert(o));pedit=null;await loadTables(['products']);render()}finally{btn.disabled=false}
 }
-function delProd(id){if(confirm('পণ্যটি মুছবেন? (আগের ইনভয়েস অক্ষত থাকবে)')){DB.products=DB.products.filter(p=>p.id!==id);save();render()}}
+async function delProd(id){
+ if(!confirm('পণ্যটি মুছবেন? (আগের ইনভয়েস অক্ষত থাকবে)'))return;
+ await q(sb.from('products').delete().eq('id',id));await loadTables(['products']);render();
+}
 /* ---------- sale / purchase form ---------- */
 const CF={s:{title:'নতুন বিক্রি',party:'customers',pk:'customerId',pn:'customerName',list:'sales',pf:'sell',pl:'কাস্টমার',walk:'নগদ কাস্টমার',pr:'বিক্রয়মূল্য'},
 p:{title:'নতুন ক্রয়',party:'suppliers',pk:'supplierId',pn:'supplierName',list:'purchases',pf:'cost',pl:'সাপ্লায়ার',walk:'নগদ ক্রয়',pr:'ক্রয়মূল্য'}};
-const cart={s:[],p:[]},fs={s:{party:'',disc:0,paid:'',date:today(),np:'',sel:''},p:{party:'',disc:0,paid:'',date:today(),np:'',sel:''}};
+const cart={s:[],p:[]},fs={s:{party:'',disc:0,paid:'',date:today(),sel:''},p:{party:'',disc:0,paid:'',date:today(),sel:''}};
 function docForm(k){
  const c=CF[k],f=fs[k],items=cart[k];
  return`<div class="card"><h2>${c.title}</h2><div class="row">
@@ -142,7 +185,7 @@ function docForm(k){
  <label>ছাড় (৳)<input type="number" value="${f.disc||''}" oninput="fs.${k}.disc=+this.value||0;updTot('${k}')"></label>
  <label>পরিশোধ (৳) — ফাঁকা = পুরো টাকা<input type="number" value="${f.paid}" oninput="fs.${k}.paid=this.value;updTot('${k}')"></label></div>
  <div class="tot"><span>সাবটোটাল: <b id="st${k}"></b></span><span>মোট: <b id="tt${k}"></b></span><span>জমা: <b id="pd${k}" class="grn"></b></span><span>বাকি: <b id="du${k}" class="red"></b></span></div>
- <div style="text-align:right;margin-top:10px"><button class="b" onclick="saveDoc('${k}')">সেভ করুন${k==='s'?' ও ইনভয়েস দেখুন':''}</button></div></div>`
+ <div style="text-align:right;margin-top:10px"><button class="b" onclick="saveDoc('${k}',this)">সেভ করুন${k==='s'?' ও ইনভয়েস দেখুন':''}</button></div></div>`
  +(setTimeout(()=>updTot(k)),'');
 }
 function tots(k){const f=fs[k],st=sum(cart[k],i=>i.qty*i.price),t=Math.max(0,st-(f.disc||0)),p=f.paid===''?t:(+f.paid||0);return{st,t,p,d:t-p}}
@@ -155,32 +198,35 @@ function addItem(k){
  if(k==='s'&&qty>p.stock&&!confirm(`স্টকে আছে ${p.stock}, আপনি ${qty} বিক্রি করছেন। চালিয়ে যাবেন?`))return;
  cart[k].push({pid,name:p.name,qty,price,cost:p.cost});fs[k].sel='';render();
 }
-function quickParty(k){
+async function quickParty(k){
  const name=prompt('নাম:');if(!name)return;const phone=prompt('ফোন (ঐচ্ছিক):')||'';
- const o={id:uid(),name,phone,address:''};DB[CF[k].party].push(o);fs[k].party=o.id;save();render();
+ const o={id:uid(),name,phone,address:''},t=CF[k].party;
+ await q(sb.from(t).insert(o));fs[k].party=o.id;await loadTables([t]);render();
 }
-function saveDoc(k){
+async function saveDoc(k,btn){
  const c=CF[k],f=fs[k],items=cart[k];if(!items.length)return alert('আইটেম যোগ করুন');
  const x=tots(k);if(x.d<0)return alert('পরিশোধ মোটের চেয়ে বেশি হতে পারে না');
  if(x.d>0&&!f.party)return alert('বাকি রাখতে হলে '+c.pl+' বেছে নিন');
  const party=DB[c.party].find(p=>p.id===f.party);
  const rec={id:uid(),date:f.date,[c.pk]:f.party||null,[c.pn]:party?party.name:c.walk,items:items.map(i=>({...i})),subtotal:x.st,discount:f.disc||0,total:x.t,paid:x.p,due:x.d};
- if(k==='s'){rec.inv='INV-'+String(DB.settings.nextInv++).padStart(4,'0');items.forEach(i=>{const p=DB.products.find(p=>p.id===i.pid);if(p)p.stock-=i.qty})}
- else items.forEach(i=>{const p=DB.products.find(p=>p.id===i.pid);if(p){p.stock+=i.qty;p.cost=i.price}});
- DB[c.list].push(rec);save();cart[k]=[];fs[k]={party:'',disc:0,paid:'',date:today(),np:'',sel:''};
- if(k==='s')go('inv',rec.id);else go('purch');
+ btn.disabled=true;
+ try{
+  if(k==='s')await q(sb.rpc('create_sale',{r:rec}));else await q(sb.rpc('create_purchase',{r:rec}));
+  cart[k]=[];fs[k]={party:'',disc:0,paid:'',date:today(),sel:''};
+  await loadTables([c.list,'products']);
+  if(k==='s'){view='inv';arg=rec.id;render()}else go('purch',null,true);
+ }finally{btn.disabled=false}
 }
 /* ---------- lists ---------- */
 function list(k){
- const c=CF[k],L=[...DB[c.list]].sort((a,b)=>b.date.localeCompare(a.date)||0).reverse().reverse();
+ const c=CF[k],L=[...DB[c.list]].sort((a,b)=>b.date.localeCompare(a.date));
  return`<div class="card"><h2>${k==='s'?'বিক্রির তালিকা':'ক্রয়ের তালিকা'}</h2><div class="w"><table><tr><th>তারিখ</th>${k==='s'?'<th>ইনভয়েস</th>':''}<th>${c.pl}</th><th class="r">মোট</th><th class="r">জমা</th><th class="r">বাকি</th><th></th></tr>
- ${L.map(s=>`<tr><td>${s.date}</td>${k==='s'?`<td>${s.inv}</td>`:''}<td>${esc(s[c.pn])}</td><td class="r">${money(s.total)}</td><td class="r">${money(s.paid)}</td><td class="r ${s.due>0?'red':''}">${money(s.due)}</td><td>${k==='s'?`<button class="s" onclick="go('inv','${s.id}')">ইনভয়েস</button> `:''}<button class="d" onclick="cancelDoc('${k}','${s.id}')">বাতিল</button></td></tr>`).join('')||'<tr><td colspan="7">কিছু নেই</td></tr>'}</table></div></div>`;
+ ${L.map(s=>`<tr><td>${s.date}</td>${k==='s'?`<td>${esc(s.inv)}</td>`:''}<td>${esc(s[c.pn])}</td><td class="r">${money(s.total)}</td><td class="r">${money(s.paid)}</td><td class="r ${s.due>0?'red':''}">${money(s.due)}</td><td>${k==='s'?`<button class="s" onclick="go('inv','${s.id}',true)">ইনভয়েস</button> `:''}<button class="d" onclick="cancelDoc('${k}','${s.id}')">বাতিল</button></td></tr>`).join('')||'<tr><td colspan="7">কিছু নেই</td></tr>'}</table></div></div>`;
 }
-function cancelDoc(k,id){
+async function cancelDoc(k,id){
  if(!confirm('বাতিল করলে স্টক আগের অবস্থায় ফিরবে। নিশ্চিত?'))return;
- const c=CF[k],r=DB[c.list].find(x=>x.id===id);
- r.items.forEach(i=>{const p=DB.products.find(p=>p.id===i.pid);if(p)p.stock+=(k==='s'?i.qty:-i.qty)});
- DB[c.list]=DB[c.list].filter(x=>x.id!==id);save();render();
+ await q(sb.rpc(k==='s'?'cancel_sale':'cancel_purchase',{did:id}));
+ await loadTables([CF[k].list,'products']);render();
 }
 /* ---------- invoice ---------- */
 function inv(){
@@ -188,7 +234,7 @@ function inv(){
  const st=DB.settings,cu=DB.customers.find(c=>c.id===s.customerId);
  return`<div class="noprint" style="text-align:center;margin-bottom:10px"><button class="b" onclick="window.print()">প্রিন্ট</button> <button class="s" onclick="go('sell')">নতুন বিক্রি</button></div>
  <div id="invoice"><h2>${esc(st.shop)}</h2><p class="ctr">${esc(st.address)} ${st.phone?'| মোবাইল: '+esc(st.phone):''}</p><hr>
- <p><b>ইনভয়েস:</b> ${s.inv} &nbsp; <b>তারিখ:</b> ${s.date}<br><b>কাস্টমার:</b> ${esc(s.customerName)} ${cu&&cu.phone?'('+esc(cu.phone)+')':''}</p>
+ <p><b>ইনভয়েস:</b> ${esc(s.inv)} &nbsp; <b>তারিখ:</b> ${s.date}<br><b>কাস্টমার:</b> ${esc(s.customerName)} ${cu&&cu.phone?'('+esc(cu.phone)+')':''}</p>
  <table><tr><th>#</th><th>বিবরণ</th><th class="r">পরিমাণ</th><th class="r">দর</th><th class="r">মোট</th></tr>${s.items.map((i,n)=>`<tr><td>${n+1}</td><td>${esc(i.name)}</td><td class="r">${i.qty}</td><td class="r">${money(i.price)}</td><td class="r">${money(i.qty*i.price)}</td></tr>`).join('')}</table>
  <div class="tot" style="flex-direction:column;align-items:flex-end;gap:3px"><span>সাবটোটাল: ${money(s.subtotal)}</span><span>ছাড়: ${money(s.discount)}</span><span><b>সর্বমোট: ${money(s.total)}</b></span><span>জমা: ${money(s.paid)}</span><span class="red"><b>বাকি: ${money(s.due)}</b></span>${cu?`<span>মোট পুরনো বাকি: ${money(custDue(cu.id))}</span>`:''}</div>
  <p class="ctr" style="margin-top:20px">ধন্যবাদ! আবার আসবেন।</p></div>`;
@@ -200,25 +246,35 @@ function parties(t){
  <div class="card"><div class="w"><table><tr><th>নাম</th><th>ফোন</th><th>ঠিকানা</th><th class="r">${t==='c'?'পাওনা':'দেনা'}</th><th></th></tr>
  ${DB[k].map(x=>{const d=dueF(x.id);return`<tr><td>${esc(x.name)}</td><td>${esc(x.phone)}</td><td>${esc(x.address)}</td><td class="r ${d>0?'red':''}">${money(d)}</td><td><button class="b" onclick="pay('${t}','${x.id}')">${t==='c'?'টাকা জমা নিন':'টাকা পরিশোধ'}</button> <button class="s" onclick="ledger('${t}','${x.id}')">হিসাব</button> <button class="d" onclick="delParty('${k}','${x.id}')">মুছুন</button></td></tr>`}).join('')||'<tr><td colspan="5">কেউ নেই</td></tr>'}</table></div></div>`;
 }
-function addParty(k){const n=$('xn').value.trim();if(!n)return alert('নাম দিন');DB[k].push({id:uid(),name:n,phone:$('xp').value,address:$('xa').value});save();render()}
-function delParty(k,id){if(confirm('মুছবেন? (আগের লেনদেন থাকবে)')){DB[k]=DB[k].filter(x=>x.id!==id);save();render()}}
-function pay(t,id){
+async function addParty(k){
+ const n=$('xn').value.trim();if(!n)return alert('নাম দিন');
+ await q(sb.from(k).insert({id:uid(),name:n,phone:$('xp').value,address:$('xa').value}));await loadTables([k]);render();
+}
+async function delParty(k,id){
+ if(!confirm('মুছবেন? (আগের লেনদেন থাকবে)'))return;
+ await q(sb.from(k).delete().eq('id',id));await loadTables([k]);render();
+}
+async function pay(t,id){
  const a=+prompt(t==='c'?'কত টাকা জমা নিলেন?':'কত টাকা পরিশোধ করলেন?');if(!(a>0))return;
- DB.payments.push({id:uid(),date:today(),type:t,partyId:id,amount:a});save();render();
+ await q(sb.from('payments').insert({id:uid(),date:today(),type:t,partyId:id,amount:a}));await loadTables(['payments']);render();
 }
 function ledger(t,id){
  const isC=t==='c',L=isC?DB.sales.filter(s=>s.customerId===id):DB.purchases.filter(s=>s.supplierId===id);
  const P=DB.payments.filter(p=>p.type===t&&p.partyId===id);
  const rows=[...L.map(s=>({d:s.date,t:(isC?s.inv:'ক্রয়')+' — মোট '+money(s.total)+', জমা '+money(s.paid),dr:s.due,cr:0})),...P.map(p=>({d:p.date,t:'টাকা '+(isC?'জমা':'পরিশোধ'),dr:0,cr:p.amount}))].sort((a,b)=>a.d.localeCompare(b.d));
- let bal=0;$('app').innerHTML=`<div class="card"><button class="s" onclick="go('${isC?'cust':'supp'}')">← ফিরে যান</button><h2 style="margin-top:10px">হিসাব খাতা</h2><div class="w"><table><tr><th>তারিখ</th><th>বিবরণ</th><th class="r">বাকি হলো</th><th class="r">পরিশোধ</th><th class="r">ব্যালেন্স</th></tr>${rows.map(r=>{bal+=r.dr-r.cr;return`<tr><td>${r.d}</td><td>${esc(r.t)}</td><td class="r">${r.dr?money(r.dr):''}</td><td class="r">${r.cr?money(r.cr):''}</td><td class="r">${money(bal)}</td></tr>`}).join('')||'<tr><td colspan="5">লেনদেন নেই</td></tr>'}</table></div></div>`;
+ let bal=0;$('app').innerHTML=`<div class="card"><button class="s" onclick="go('${isC?'cust':'supp'}',null,true)">← ফিরে যান</button><h2 style="margin-top:10px">হিসাব খাতা</h2><div class="w"><table><tr><th>তারিখ</th><th>বিবরণ</th><th class="r">বাকি হলো</th><th class="r">পরিশোধ</th><th class="r">ব্যালেন্স</th></tr>${rows.map(r=>{bal+=r.dr-r.cr;return`<tr><td>${r.d}</td><td>${esc(r.t)}</td><td class="r">${r.dr?money(r.dr):''}</td><td class="r">${r.cr?money(r.cr):''}</td><td class="r">${money(bal)}</td></tr>`}).join('')||'<tr><td colspan="5">লেনদেন নেই</td></tr>'}</table></div></div>`;
 }
 /* ---------- expenses ---------- */
 function exp(){
  const L=[...DB.expenses].sort((a,b)=>b.date.localeCompare(a.date));
  return`<div class="card"><h2>নতুন খরচ</h2><div class="row"><label>তারিখ<input id="ed" type="date" value="${today()}"></label><label>খাত<select id="ec">${['দোকান ভাড়া','বেতন','বিদ্যুৎ বিল','পরিবহন','চা-নাস্তা','অন্যান্য'].map(c=>`<option>${c}</option>`).join('')}</select></label><label>টাকা<input id="ea" type="number"></label><label>নোট<input id="en"></label><button class="b" onclick="addExp()">যোগ করুন</button></div></div>
- <div class="card"><div class="w"><table><tr><th>তারিখ</th><th>খাত</th><th>নোট</th><th class="r">টাকা</th><th></th></tr>${L.map(e=>`<tr><td>${e.date}</td><td>${esc(e.cat)}</td><td>${esc(e.note)}</td><td class="r">${money(e.amount)}</td><td><button class="d" onclick="DB.expenses=DB.expenses.filter(x=>x.id!=='${e.id}');save();render()">✕</button></td></tr>`).join('')||'<tr><td colspan="5">কোনো খরচ নেই</td></tr>'}</table></div></div>`;
+ <div class="card"><div class="w"><table><tr><th>তারিখ</th><th>খাত</th><th>নোট</th><th class="r">টাকা</th><th></th></tr>${L.map(e=>`<tr><td>${e.date}</td><td>${esc(e.cat)}</td><td>${esc(e.note)}</td><td class="r">${money(e.amount)}</td><td><button class="d" onclick="delExp('${e.id}')">✕</button></td></tr>`).join('')||'<tr><td colspan="5">কোনো খরচ নেই</td></tr>'}</table></div></div>`;
 }
-function addExp(){const a=+$('ea').value;if(!(a>0))return alert('টাকার পরিমাণ দিন');DB.expenses.push({id:uid(),date:$('ed').value,cat:$('ec').value,amount:a,note:$('en').value});save();render()}
+async function addExp(){
+ const a=+$('ea').value;if(!(a>0))return alert('টাকার পরিমাণ দিন');if(!$('ed').value)return alert('তারিখ দিন');
+ await q(sb.from('expenses').insert({id:uid(),date:$('ed').value,cat:$('ec').value,amount:a,note:$('en').value}));await loadTables(['expenses']);render();
+}
+async function delExp(id){await q(sb.from('expenses').delete().eq('id',id));await loadTables(['expenses']);render()}
 /* ---------- reports ---------- */
 let rt='d',rv=today();
 function rep(){
@@ -231,20 +287,33 @@ function rep(){
  <div class="grid"><div class="stat"><small>মোট বিক্রি</small><b>${money(r.sales)}</b></div><div class="stat"><small>পণ্যের ক্রয়মূল্য (COGS)</small><b>${money(r.cogs)}</b></div><div class="stat"><small>মোট লাভ</small><b class="grn">${money(r.profit)}</b></div><div class="stat"><small>খরচ</small><b>${money(r.exp)}</b></div><div class="stat"><small>নিট লাভ</small><b class="${r.net>=0?'grn':'red'}">${money(r.net)}</b></div><div class="stat"><small>মোট ক্রয়</small><b>${money(r.purch)}</b></div><div class="stat"><small>এ সময়ে বাকি দেওয়া</small><b class="red">${money(r.dueGiven)}</b></div><div class="stat"><small>ক্যাশ আয় / ব্যয়</small><b>${money(r.cin)} / ${money(r.cout)}</b></div><div class="stat"><small>নিট ক্যাশ</small><b>${money(r.cash)}</b></div></div>
  ${months}
  <div class="card" style="margin-top:14px"><h2>পণ্যভিত্তিক বিক্রি</h2><div class="w"><table><tr><th>পণ্য</th><th class="r">পরিমাণ</th><th class="r">টাকা</th></tr>${Object.entries(items).sort((a,b)=>b[1].t-a[1].t).map(([n,v])=>`<tr><td>${esc(n)}</td><td class="r">${v.q}</td><td class="r">${money(v.t)}</td></tr>`).join('')||'<tr><td colspan="3">বিক্রি নেই</td></tr>'}</table></div></div>
- <div class="card"><h2>বিক্রির বিবরণ</h2><div class="w"><table><tr><th>তারিখ</th><th>ইনভয়েস</th><th>কাস্টমার</th><th class="r">মোট</th><th class="r">বাকি</th></tr>${r.S.map(s=>`<tr><td>${s.date}</td><td>${s.inv}</td><td>${esc(s.customerName)}</td><td class="r">${money(s.total)}</td><td class="r">${money(s.due)}</td></tr>`).join('')||'<tr><td colspan="5">কিছু নেই</td></tr>'}</table></div></div>`;
+ <div class="card"><h2>বিক্রির বিবরণ</h2><div class="w"><table><tr><th>তারিখ</th><th>ইনভয়েস</th><th>কাস্টমার</th><th class="r">মোট</th><th class="r">বাকি</th></tr>${r.S.map(s=>`<tr><td>${s.date}</td><td>${esc(s.inv)}</td><td>${esc(s.customerName)}</td><td class="r">${money(s.total)}</td><td class="r">${money(s.due)}</td></tr>`).join('')||'<tr><td colspan="5">কিছু নেই</td></tr>'}</table></div></div>`;
 }
 /* ---------- settings ---------- */
 function set(){
  const s=DB.settings;
  return`<div class="card"><h2>দোকানের তথ্য (ইনভয়েসে দেখাবে)</h2><div class="row"><label>দোকানের নাম<input id="sn" value="${esc(s.shop)}"></label><label>মোবাইল<input id="sp" value="${esc(s.phone)}"></label><label>ঠিকানা<input id="sa" value="${esc(s.address)}"></label><button class="b" onclick="saveSet()">সেভ</button></div></div>
- <div class="card"><h2>ব্যাকআপ</h2><p>তথ্য এই ব্রাউজারে সেভ থাকে। নিয়মিত (প্রতিদিন/সপ্তাহে) ব্যাকআপ ডাউনলোড করে রাখুন — ফোন/ব্রাউজার বদলালে ব্যাকআপ রিস্টোর করলে সব ফিরে আসবে।</p>
- <div class="row"><button class="b" onclick="backup()">ব্যাকআপ ডাউনলোড</button><label>রিস্টোর<input type="file" accept=".json" onchange="restore(this)"></label><button class="d" onclick="resetAll()">সব তথ্য মুছুন</button></div></div>`;
+ <div class="card"><h2>ব্যাকআপ</h2><p>সব তথ্য ক্লাউডে (Supabase) সেভ থাকে। তবুও মাঝে মাঝে একটা কপি নামিয়ে রাখা নিরাপদ।</p>
+ <div class="row"><button class="b" onclick="backup()">ব্যাকআপ ডাউনলোড (JSON)</button></div></div>`;
 }
-function saveSet(){Object.assign(DB.settings,{shop:$('sn').value,phone:$('sp').value,address:$('sa').value});save();render()}
+async function saveSet(){
+ await q(sb.from('settings').upsert({id:1,shop:$('sn').value,phone:$('sp').value,address:$('sa').value}));
+ await loadTables(['settings']);render();
+}
 function backup(){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(DB)],{type:'application/json'}));a.download='dokan-backup-'+today()+'.json';a.click()}
-function restore(el){const f=el.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{const d=JSON.parse(r.result);if(!d.products||!d.sales)throw 0;if(confirm('বর্তমান সব তথ্য বদলে যাবে। নিশ্চিত?')){DB=d;save();render()}}catch(e){alert('ফাইলটি ঠিক নয়')}};r.readAsText(f)}
-function resetAll(){if(confirm('সব তথ্য মুছে যাবে! নিশ্চিত?')&&confirm('শেষবার জিজ্ঞাসা: সত্যিই মুছবেন?')){localStorage.removeItem(KEY);DB=load();render()}}
-render();
+/* ---------- boot ---------- */
+async function boot(){
+ const C=window.CFG;
+ if(!C||!C.url||!C.key||C.url.startsWith('YOUR')||!window.supabase){
+  $('app').innerHTML='<div class="card"><h2>সেটআপ বাকি</h2><p><b>config.js</b> ফাইলে Supabase URL ও anon key বসানো হয়নি। README.md দেখুন।</p></div>';return;
+ }
+ sb=window.supabase.createClient(C.url,C.key);
+ const {data}=await sb.auth.getSession();
+ sess=data.session;
+ sb.auth.onAuthStateChange((ev,s)=>{sess=s;if(ev==='SIGNED_OUT')showLogin()});
+ if(sess){$('app').innerHTML='<div class="card">লোড হচ্ছে…</div>';await loadAll();render()}else showLogin();
+}
+boot();
 </script>
 </body>
 </html>
